@@ -1,0 +1,134 @@
+%% Global Variables
+
+% global base_points_matrix table_points_matrix x_hat y_hat z_hat Rbt_hat;
+% clear;
+close all;
+
+%% Variables Definitions
+
+calibration_script;
+
+disp(T_b_t);
+
+%%
+
+T_b_t_hat = transl([1.39 0.1 -0.5])*trotz(180);
+
+n_points = size(P_t,2);
+P_b_meas = P_b + 0.025*normrnd(0,1,3,n_points); % noise from measurements of points
+%P_b_meas = P_b;
+
+disp(T_b_t_hat);
+
+
+%% Estimated values for pose (Don't change)
+
+
+x_bt_hat_p = T_b_t_hat(1:3,4);
+x_bt_hat_R = rotm2eul(T_b_t_hat(1:3,1:3),'zyx');
+
+x_bt_hat = [x_bt_hat_p' x_bt_hat_R];
+
+
+%% Script
+
+n_iter = 1000;
+beta = 0.5; % gain
+
+N = [];     % norm value in each iteration
+F = [];     % objective function in each iteration
+X = [];     % homogenous transformation in vectorial notation
+
+for i=1:n_iter
+    f = obj_fun(x_bt_hat, P_b_meas, P_t);
+    
+	jacob_f = jacobian_fun(x_bt_hat, P_t);
+    
+    pinv_jacob = pinv(jacob_f);
+    
+    new_x_bt_hat = x_bt_hat - (beta * pinv_jacob * f)';
+    
+    dXbt = new_x_bt_hat - x_bt_hat;
+    x_bt_hat = new_x_bt_hat;
+    
+    dPos = norm(dXbt(1:3));
+    dPhi = abs(dXbt(4));
+    dTheta = abs(dXbt(5));
+    dPsi = abs(dXbt(6));
+    
+    eps_pos = 0.001/1000;
+    eps_ori = deg2rad(0.001);
+    
+    norm_value = norm(f);
+    F = [F f];
+    N = [N norm_value];
+    X = [X; x_bt_hat];
+    
+    stop_iter = i;
+        
+    if (dPos < eps_pos && dPhi < eps_ori && dTheta < eps_ori && dPsi < eps_ori)
+        fprintf('Stop condition on iteration %d \n', i);
+        break;
+    end
+end
+
+% fprintf('The norm of function in this iteration is %.8f \n \n', norm_value);
+% fprintf('Vectorial notation of the last iteration (X_BT):\n');
+% x_bt
+
+I = 1:stop_iter;
+
+T_b_t_hat_final = [eul2rotm(x_bt_hat(4:6),'zyx') x_bt_hat(1:3)'; 0 0 0 1];
+
+disp(T_b_t_hat_final);
+
+
+%% Plots
+
+% plotCalibration;
+
+%% Objective Function
+
+function y = obj_fun(x_bt, P, P_t)
+
+    n_points = length(P);
+    
+    p_bt = x_bt(1:3);
+    R_bt = eul2rotm(x_bt(4:6),'zyx');
+    T_bt = [R_bt p_bt(:); 0 0 0 1];
+
+    y_matrix = P - T_bt(1:3,:)*[P_t; ones(1,n_points)];
+    y = y_matrix(:);
+end
+
+
+%% Jacobian Matrix
+
+function y = jacobian_fun(x_bt, P)
+    n_points = length(P);
+    
+    phi = x_bt(4); % z
+    theta = x_bt(5); % y
+    psi = x_bt(6); % x
+    
+    % Jacobian matrix for position and orientation
+    df_dpbt = [];
+    df_drbt = [];
+    
+    % Derivatives
+    dr_dphi = [-sin(phi) -cos(phi) 0; cos(phi) -sin(phi) 0; 0 0 0]*roty(theta)*rotx(psi);   % z
+    dr_dtheta = rotz(phi)*[-sin(theta) 0 cos(theta); 0 0 0; -cos(theta) 0 -sin(theta)]*rotx(psi);   % y
+    dr_dpsi = rotz(phi)*roty(theta)*[0 0 0; 0 -sin(psi) -cos(psi); 0 cos(psi) -sin(psi)];   % x
+    
+    % this loop calculates each "block line" on jacobian matrix
+    for i=1:n_points
+        p_i = P(:,i);
+        part_deriv = [dr_dphi*p_i dr_dtheta*p_i dr_dpsi*p_i];
+        df_drbt = [df_drbt; -part_deriv];
+        df_dpbt = [df_dpbt; -eye(3)];
+    end
+    
+    jacob_f = [df_dpbt df_drbt];
+    y = jacob_f;
+
+end
